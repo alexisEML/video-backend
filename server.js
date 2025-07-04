@@ -10,10 +10,16 @@ const app = express();
 // Configurar CORS para producción
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://tu-frontend.vercel.app', 'https://tu-dominio.com']
+    ? [
+        'https://id-preview--7e1c36ed-fff7-4bde-8ecb-8ae0583f53ea.lovable.app', // ✅ URL actual
+        'https://7e1c36ed-fff7-4bde-8ecb-8ae0583f53ea.lovableproject.com'
+      ]
     : true,
   credentials: true
 }));
+
+// Middleware para parsear JSON
+app.use(express.json());
 
 // Configurar directorio temporal para Render
 const uploadDir = process.env.NODE_ENV === 'production' 
@@ -40,8 +46,6 @@ const upload = multer({
   }
 });
 
-// ... resto de tu código ...
-
 // Endpoint de salud para Render
 app.get('/', (req, res) => {
   res.json({ 
@@ -57,6 +61,53 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     memory: process.memoryUsage()
   });
+});
+
+// Endpoint para procesar video
+app.post('/process', upload.single('video'), async (req, res) => {
+  try {
+    console.log('📥 Recibiendo video para procesar...');
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    }
+
+    const inputPath = req.file.path;
+    const outputPath = path.join(outputDir, `processed_${Date.now()}.mp4`);
+
+    console.log(`📹 Procesando: ${inputPath}`);
+    console.log(`📄 Archivo: ${req.file.originalname}, Tamaño: ${req.file.size} bytes`);
+    
+    // Aquí puedes agregar tu lógica de procesamiento con FFmpeg
+    // Por ejemplo:
+    /*
+    await new Promise((resolve, reject) => {
+      ffmpeg(inputPath)
+        .output(outputPath)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+    */
+    
+    res.json({
+      success: true,
+      message: 'Video procesado exitosamente',
+      originalName: req.file.originalname,
+      size: req.file.size,
+      timestamp: new Date().toISOString()
+    });
+
+    // Limpiar archivo temporal
+    fs.unlinkSync(inputPath);
+    
+  } catch (error) {
+    console.error('❌ Error procesando video:', error);
+    res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error.message 
+    });
+  }
 });
 
 const PORT = process.env.PORT || 3001;
