@@ -125,32 +125,46 @@ app.post('/process', upload.single('video'), async (req, res) => {
     console.log(`📊 Tamaño: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
 
     // Procesar video con FFmpeg
-    await new Promise((resolve, reject) => {
-      ffmpeg(inputPath)
-        .output(outputPath)
-        .videoCodec('libx264')
-        .audioCodec('aac')
-        .format('mp4')
-        .size('1280x720') // Redimensionar a 720p
-        .fps(30) // 30 FPS
-        .videoBitrate('2000k') // 2 Mbps
-        .audioBitrate('128k') // 128 kbps
-        .on('start', (commandLine) => {
-          console.log('🎬 FFmpeg iniciado:', commandLine);
-        })
-        .on('progress', (progress) => {
-          console.log(`⏳ Progreso: ${Math.round(progress.percent || 0)}%`);
-        })
-        .on('end', () => {
-          console.log('✅ Video procesado exitosamente');
-          resolve();
-        })
-        .on('error', (err) => {
-          console.error('❌ Error en FFmpeg:', err);
-          reject(err);
-        })
-        .run();
-    });
+   await new Promise((resolve, reject) => {
+  ffmpeg(inputPath)
+    .videoFilters({
+      filter: 'drawtext',
+      options: {
+        fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        text: timestamp,
+        fontsize: 24,
+        fontcolor: 'white',
+        box: 1,
+        boxcolor: 'black@0.5',
+        boxborderw: 5,
+        x: '(w-text_w)-10',
+        y: 10
+      }
+    })
+    .output(outputPath)
+    .videoCodec('libx264')
+    .audioCodec('aac')
+    .format('mp4')
+    .size('1280x720')
+    .fps(30)
+    .videoBitrate('2000k')
+    .audioBitrate('128k')
+    .on('start', command => {
+      console.log('🎬 FFmpeg iniciado:', command);
+    })
+    .on('progress', progress => {
+      console.log(`⏳ Progreso: ${Math.round(progress.percent || 0)}%`);
+    })
+    .on('end', () => {
+      console.log('✅ Video procesado exitosamente');
+      resolve();
+    })
+    .on('error', err => {
+      console.error('❌ Error en FFmpeg:', err);
+      reject(err);
+    })
+    .run();
+});
 
     // Verificar que el video se procesó correctamente
     if (!fs.existsSync(outputPath)) {
