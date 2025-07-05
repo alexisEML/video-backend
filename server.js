@@ -58,6 +58,18 @@ const upload = multer({
   }
 });
 
+// ✅ Función auxiliar para limpiar archivos de forma segura
+function safeUnlink(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`🗑️ Archivo eliminado: ${path.basename(filePath)}`);
+    }
+  } catch (error) {
+    console.error(`⚠️ Error eliminando archivo ${filePath}:`, error.message);
+  }
+}
+
 // ✅ Endpoint de salud para Render
 app.get('/', (req, res) => {
   res.json({ 
@@ -81,8 +93,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ✅ Endpoint para procesar video
+// ✅ Endpoint para procesar video CON miniatura integrada
 app.post('/process', upload.single('video'), async (req, res) => {
+  let inputPath = null;
+  let outputPath = null;
+  let thumbnailPath = null;
+
   try {
     console.log('📥 Recibiendo video para procesar...');
     console.log('Body:', req.body);
@@ -99,9 +115,11 @@ app.post('/process', upload.single('video'), async (req, res) => {
       });
     }
 
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
     const outputFilename = `processed_${Date.now()}.mp4`;
-    const outputPath = path.join(outputDir, outputFilename);
+    outputPath = path.join(outputDir, outputFilename);
+    const thumbnailFilename = `thumbnail_${Date.now()}.jpg`;
+    thumbnailPath = path.join(outputDir, thumbnailFilename);
 
     console.log(`📹 Procesando video: ${req.file.originalname}`);
     console.log(`📊 Tamaño: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
@@ -117,6 +135,7 @@ app.post('/process', upload.single('video'), async (req, res) => {
         .fps(30) // 30 FPS
         .videoBitrate('2000k') // 2 Mbps
         .audioBitrate('128k') // 128 kbps
+        .timeout(60) // Timeout de 60 segundos
         .on('start', (commandLine) => {
           console.log('🎬 FFmpeg iniciado:', commandLine);
         })
@@ -134,11 +153,54 @@ app.post('/process', upload.single('video'), async (req, res) => {
         .run();
     });
 
+    // Verificar que el video se procesó correctamente
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('El video no se procesó correctamente');
+    }
+
+    // Generar miniatura del video procesado
+    let thumbnailBase64 = null;
+    try {
+      console.log('📸 Generando miniatura...');
+      
+      await new Promise((resolve, reject) => {
+        ffmpeg(outputPath) // Usar el video procesado como fuente
+          .seekInput(1) // Ir al segundo 1
+          .frames(1) // Capturar solo 1 frame
+          .size('320x240') // Tamaño de la miniatura
+          .format('image2') // Formato de imagen
+          .output(thumbnailPath)
+          .timeout(30) // Timeout de 30 segundos para miniatura
+          .on('start', (commandLine) => {
+            console.log('🎬 FFmpeg iniciado para miniatura:', commandLine);
+          })
+          .on('end', () => {
+            console.log('✅ Miniatura generada exitosamente');
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error('❌ Error generando miniatura:', err);
+            reject(err);
+          })
+          .run();
+      });
+
+      // Leer miniatura y convertir a base64
+      if (fs.existsSync(thumbnailPath)) {
+        const thumbnailBuffer = fs.readFileSync(thumbnailPath);
+        thumbnailBase64 = `data:image/jpeg;base64,${thumbnailBuffer.toString('base64')}`;
+        console.log(`📸 Miniatura generada, tamaño: ${thumbnailBuffer.length} bytes`);
+      }
+    } catch (thumbnailError) {
+      console.error('⚠️ Error generando miniatura (continuando sin ella):', thumbnailError);
+      // Continuar sin miniatura si hay error
+    }
+
     // Leer archivo procesado para enviarlo como respuesta
     const processedVideoBuffer = fs.readFileSync(outputPath);
     const processedVideoBase64 = processedVideoBuffer.toString('base64');
 
-    // Respuesta exitosa
+    // Respuesta exitosa con video y miniatura
     res.json({
       success: true,
       message: 'Video procesado exitosamente',
@@ -146,20 +208,22 @@ app.post('/process', upload.single('video'), async (req, res) => {
       originalSize: req.file.size,
       processedSize: processedVideoBuffer.length,
       processedVideo: `data:video/mp4;base64,${processedVideoBase64}`,
+      thumbnail: thumbnailBase64, // Incluir miniatura aquí (puede ser null)
       timestamp: new Date().toISOString()
     });
 
     // Limpiar archivos temporales
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
+    safeUnlink(inputPath);
+    safeUnlink(outputPath);
+    safeUnlink(thumbnailPath);
     
   } catch (error) {
     console.error('❌ Error procesando video:', error);
     
-    // Limpiar archivo temporal en caso de error
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    // Limpiar archivos temporales en caso de error
+    safeUnlink(inputPath);
+    safeUnlink(outputPath);
+    safeUnlink(thumbnailPath);
     
     res.status(500).json({ 
       error: 'Error interno del servidor',
@@ -169,8 +233,11 @@ app.post('/process', upload.single('video'), async (req, res) => {
   }
 });
 
-// ✅ Endpoint para generar miniatura
+// ✅ Endpoint para generar miniatura (CORREGIDO pero mantenido para compatibilidad)
 app.post('/thumbnail', upload.single('video'), async (req, res) => {
+  let inputPath = null;
+  let thumbnailPath = null;
+
   try {
     console.log('📸 Generando miniatura...');
     
@@ -180,54 +247,68 @@ app.post('/thumbnail', upload.single('video'), async (req, res) => {
       });
     }
 
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
     const thumbnailFilename = `thumbnail_${Date.now()}.jpg`;
-    const thumbnailPath = path.join(outputDir, thumbnailFilename);
+    thumbnailPath = path.join(outputDir, thumbnailFilename);
 
-    // Generar miniatura en el segundo 1
+    console.log(`📸 Entrada: ${inputPath}`);
+    console.log(`📸 Salida: ${thumbnailPath}`);
+
+    // Generar miniatura usando el método correcto
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
-        .screenshots({
-          timestamps: ['00:00:01'],
-          filename: thumbnailFilename,
-          folder: outputDir,
-          size: '320x240'
+        .seekInput(1) // Ir al segundo 1
+        .frames(1) // Capturar solo 1 frame
+        .size('320x240') // Tamaño de la miniatura
+        .format('image2') // Formato de imagen
+        .output(thumbnailPath)
+        .timeout(30) // Timeout de 30 segundos
+        .on('start', (commandLine) => {
+          console.log('🎬 FFmpeg iniciado para miniatura:', commandLine);
         })
         .on('end', () => {
-          console.log('✅ Miniatura generada');
+          console.log('✅ Miniatura generada exitosamente');
           resolve();
         })
         .on('error', (err) => {
           console.error('❌ Error generando miniatura:', err);
           reject(err);
-        });
+        })
+        .run();
     });
+
+    // Verificar que el archivo se creó
+    if (!fs.existsSync(thumbnailPath)) {
+      throw new Error('La miniatura no se generó correctamente');
+    }
 
     // Leer miniatura y convertir a base64
     const thumbnailBuffer = fs.readFileSync(thumbnailPath);
     const thumbnailBase64 = thumbnailBuffer.toString('base64');
 
+    console.log(`📸 Miniatura generada, tamaño: ${thumbnailBuffer.length} bytes`);
+
     res.json({
       success: true,
       message: 'Miniatura generada exitosamente',
       thumbnail: `data:image/jpeg;base64,${thumbnailBase64}`,
+      size: thumbnailBuffer.length,
       timestamp: new Date().toISOString()
     });
 
     // Limpiar archivos temporales
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(thumbnailPath);
+    safeUnlink(inputPath);
+    safeUnlink(thumbnailPath);
     
   } catch (error) {
     console.error('❌ Error generando miniatura:', error);
     
-    // Limpiar archivo temporal en caso de error
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    // Limpiar archivos temporales en caso de error
+    safeUnlink(inputPath);
+    safeUnlink(thumbnailPath);
     
     res.status(500).json({ 
-      error: 'Error interno del servidor',
+      error: 'Error interno del servidor generando miniatura',
       details: error.message,
       timestamp: new Date().toISOString()
     });
@@ -267,6 +348,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📍 Endpoints disponibles:`);
   console.log(`   GET  /`);
   console.log(`   GET  /health`);
-  console.log(`   POST /process`);
-  console.log(`   POST /thumbnail`);
+  console.log(`   POST /process (con miniatura integrada)`);
+  console.log(`   POST /thumbnail (corregido)`);
 });
