@@ -135,7 +135,6 @@ app.post('/process', upload.single('video'), async (req, res) => {
         .fps(30) // 30 FPS
         .videoBitrate('2000k') // 2 Mbps
         .audioBitrate('128k') // 128 kbps
-        .timeout(60) // Timeout de 60 segundos
         .on('start', (commandLine) => {
           console.log('🎬 FFmpeg iniciado:', commandLine);
         })
